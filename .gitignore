@@ -1,0 +1,13 @@
+.DS_Store
+.omx/
+.venv/
+.cache/
+__pycache__/
+*.py[cod]
+
+# Large, reproducible artifacts
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
