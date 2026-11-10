@@ -175,5 +175,6 @@ tendencies; the embedding dot product captures the remaining preference match.
 
 The deterministic random search compares latent factors, learning rate,
 regularization, and epochs. The winner is selected by validation NDCG@10, with
-Recall@10 and RMSE as tie breakers. Detailed Korean explanations and plots are
-written to `reports/matrix_factorization_10k/`.
+Recall@10 and RMSE as tie breakers. Reproducible CSV, JSON, and plot outputs are
+written to `reports/matrix_factorization_10k/`; the checked-in Markdown files
+record the interpretation of the completed assignment run.

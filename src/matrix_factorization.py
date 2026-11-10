@@ -69,14 +69,7 @@ class MatrixFactorization:
         items = coo.col.astype(np.int64, copy=False)
         observed = coo.data.astype(np.float64, copy=False)
         generator = np.random.default_rng(self.config.seed)
-        scale = 0.1 / np.sqrt(self.config.factors)
-
-        self.train_ = train
-        self.global_mean_ = float(observed.mean())
-        self.user_bias_ = np.zeros(train.shape[0], dtype=np.float64)
-        self.item_bias_ = np.zeros(train.shape[1], dtype=np.float64)
-        self.user_factors_ = generator.normal(0.0, scale, (train.shape[0], self.config.factors))
-        self.item_factors_ = generator.normal(0.0, scale, (train.shape[1], self.config.factors))
+        self._initialize(train, float(observed.mean()), generator)
         self.training_rmse_ = []
 
         order = np.arange(observed.size)
@@ -84,52 +77,71 @@ class MatrixFactorization:
             generator.shuffle(order)
             for start in range(0, order.size, self.config.batch_size):
                 batch = order[start : start + self.config.batch_size]
-                batch_users = users[batch]
-                batch_items = items[batch]
-                batch_ratings = observed[batch]
-
-                user_vectors = self.user_factors_[batch_users].copy()
-                item_vectors = self.item_factors_[batch_items].copy()
-                predictions = (
-                    self.global_mean_
-                    + self.user_bias_[batch_users]
-                    + self.item_bias_[batch_items]
-                    + np.einsum("ij,ij->i", user_vectors, item_vectors)
-                )
-                errors = batch_ratings - predictions
-                step = self.config.learning_rate
-                penalty = self.config.regularization
-
-                # Divide by duplicate counts so a user appearing many times in
-                # one batch gets the mean update rather than an oversized sum.
-                user_counts = np.bincount(batch_users, minlength=train.shape[0])
-                item_counts = np.bincount(batch_items, minlength=train.shape[1])
-                user_weights = 1.0 / user_counts[batch_users]
-                item_weights = 1.0 / item_counts[batch_items]
-                np.add.at(
-                    self.user_bias_,
-                    batch_users,
-                    step * user_weights * (errors - penalty * self.user_bias_[batch_users]),
-                )
-                np.add.at(
-                    self.item_bias_,
-                    batch_items,
-                    step * item_weights * (errors - penalty * self.item_bias_[batch_items]),
-                )
-                np.add.at(
-                    self.user_factors_,
-                    batch_users,
-                    step * user_weights[:, None] * (errors[:, None] * item_vectors - penalty * user_vectors),
-                )
-                np.add.at(
-                    self.item_factors_,
-                    batch_items,
-                    step * item_weights[:, None] * (errors[:, None] * user_vectors - penalty * item_vectors),
-                )
-
-            epoch_predictions = self._raw_predict(users, items)
-            self.training_rmse_.append(float(np.sqrt(np.mean((observed - epoch_predictions) ** 2))))
+                self._update_batch(users[batch], items[batch], observed[batch])
+            error = observed - self._raw_predict(users, items)
+            self.training_rmse_.append(float(np.sqrt(np.mean(error**2))))
         return self
+
+    def _initialize(
+        self,
+        train: sparse.csr_matrix,
+        global_mean: float,
+        generator: np.random.Generator,
+    ) -> None:
+        scale = 0.1 / np.sqrt(self.config.factors)
+        self.train_ = train
+        self.global_mean_ = global_mean
+        self.user_bias_ = np.zeros(train.shape[0], dtype=np.float64)
+        self.item_bias_ = np.zeros(train.shape[1], dtype=np.float64)
+        self.user_factors_ = generator.normal(
+            0.0, scale, (train.shape[0], self.config.factors)
+        )
+        self.item_factors_ = generator.normal(
+            0.0, scale, (train.shape[1], self.config.factors)
+        )
+
+    def _update_batch(
+        self,
+        users: np.ndarray,
+        items: np.ndarray,
+        ratings: np.ndarray,
+    ) -> None:
+        assert self.train_ is not None and self.global_mean_ is not None
+        assert self.user_bias_ is not None and self.item_bias_ is not None
+        assert self.user_factors_ is not None and self.item_factors_ is not None
+
+        user_vectors = self.user_factors_[users].copy()
+        item_vectors = self.item_factors_[items].copy()
+        predicted = (
+            self.global_mean_
+            + self.user_bias_[users]
+            + self.item_bias_[items]
+            + np.einsum("ij,ij->i", user_vectors, item_vectors)
+        )
+        errors = ratings - predicted
+        user_weights = _inverse_frequency(users, self.train_.shape[0])
+        item_weights = _inverse_frequency(items, self.train_.shape[1])
+        step = self.config.learning_rate
+        penalty = self.config.regularization
+
+        np.add.at(
+            self.user_bias_, users,
+            step * user_weights * (errors - penalty * self.user_bias_[users]),
+        )
+        np.add.at(
+            self.item_bias_, items,
+            step * item_weights * (errors - penalty * self.item_bias_[items]),
+        )
+        np.add.at(
+            self.user_factors_, users,
+            step * user_weights[:, None]
+            * (errors[:, None] * item_vectors - penalty * user_vectors),
+        )
+        np.add.at(
+            self.item_factors_, items,
+            step * item_weights[:, None]
+            * (errors[:, None] * user_vectors - penalty * item_vectors),
+        )
 
     def _require_fitted(self) -> None:
         if self.train_ is None:
@@ -179,3 +191,10 @@ class MatrixFactorization:
         items = np.arange(self.train_.shape[1], dtype=np.int64)
         users = np.full(items.shape, user_id, dtype=np.int64)
         return self.predict_pairs(users, items)
+
+
+def _inverse_frequency(ids: np.ndarray, size: int) -> np.ndarray:
+    """Normalize repeated IDs so each entity receives one mean batch update."""
+
+    counts = np.bincount(ids, minlength=size)
+    return 1.0 / counts[ids]
