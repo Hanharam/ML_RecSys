@@ -158,3 +158,22 @@ unseen interactions rather than depending on a lucky validation split. The
 final report is stored in `reports/item_cf_10k/final_test_summary.md`.
 
 ![Validation and final test comparison](reports/item_cf_10k/validation_vs_test.png)
+
+## Matrix Factorization Experiment
+
+The second personalized model represents every user and game with a learned
+latent-factor embedding.  Global, user, and game biases capture broad rating
+tendencies; the embedding dot product captures the remaining preference match.
+
+```bash
+# Tune only on train + validation. The test file is not accepted here.
+.venv/bin/python -m src.matrix_factorization_experiment
+
+# Evaluate the frozen validation winner once on held-out test data.
+.venv/bin/python -m src.final_matrix_factorization_test
+```
+
+The deterministic random search compares latent factors, learning rate,
+regularization, and epochs. The winner is selected by validation NDCG@10, with
+Recall@10 and RMSE as tie breakers. Detailed Korean explanations and plots are
+written to `reports/matrix_factorization_10k/`.
